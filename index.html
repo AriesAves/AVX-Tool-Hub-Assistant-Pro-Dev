@@ -276,7 +276,7 @@ table.tbl tr:hover td{background:rgba(245,158,11,.04)}
         <button onclick="switchSupView('knowledge')" data-view="knowledge" class="nav-item w-full text-left px-4 py-2.5 rounded-r-lg text-sm flex items-center gap-3 text-avx-muted"><i class="fa-solid fa-brain w-4 text-center"></i>Knowledge Base</button>
         <button onclick="switchSupView('sites')" data-view="sites" class="nav-item w-full text-left px-4 py-2.5 rounded-r-lg text-sm flex items-center gap-3 text-avx-muted"><i class="fa-solid fa-globe w-4 text-center"></i>Product Sites</button>
         <button onclick="switchSupView('incidents')" data-view="incidents" class="nav-item w-full text-left px-4 py-2.5 rounded-r-lg text-sm flex items-center gap-3 text-avx-muted"><i class="fa-solid fa-triangle-exclamation w-4 text-center"></i>Incidents</button>
-        <button onclick="switchSupView('chat_sessions')" data-view="chat_sessions" class="nav-item w-full text-left px-4 py-2.5 rounded-r-lg text-sm flex items-center gap-3 text-avx-muted"><i class="fa-solid fa-comments w-4 text-center"></i>chat_sessions</button>
+        <button onclick="switchSupView('sessions')" data-view="sessions" class="nav-item w-full text-left px-4 py-2.5 rounded-r-lg text-sm flex items-center gap-3 text-avx-muted"><i class="fa-solid fa-comments w-4 text-center"></i>Sessions</button>
       </nav>
       <div class="px-4 pt-4 border-t border-avx-border mt-2">
         <div class="bg-avx-card rounded-xl p-3">
@@ -468,13 +468,13 @@ const S={
 let msgChannel=null,convChannel=null;
 let refreshCount=0;
 
-/* Cache layer for KB / Sites / Incidents / chat_sessions / Profiles / Analytics */
+/* Cache layer for KB / Sites / Incidents / Sessions / Profiles / Analytics */
 const C={
   kb:null,kbTime:0,KB_TTL:30000,
   sites:null,sitesTime:0,SITES_TTL:30000,
   profiles:null,profilesTime:0,PROFILES_TTL:60000,
   incidents:null,incidentsTime:0,INC_TTL:30000,
-  chat_sessions:null,chat_sessionsTime:0,SESS_TTL:20000,
+  sessions:null,sessionsTime:0,SESS_TTL:20000,
 };
 const flushCache=(key)=>{if(C[key]!==undefined){C[key]=null;C[key+'Time']=0;}};
 
@@ -626,7 +626,7 @@ async function handleLogout(){
     try{await db.rpc('log_activity',{p_action:'logout'});}catch(e){}
   }
   S.profile=null;S.authUser=null;S.currentSessionId=null;S.channel='';S.renderedMsgIds.clear();S.lastUserMsg='';S.lastBotMsgPlain='';S.lastBotMsgHTML='';
-  flushCache('kb');flushCache('sites');flushCache('profiles');flushCache('incidents');flushCache('chat_sessions');
+  flushCache('kb');flushCache('sites');flushCache('profiles');flushCache('incidents');flushCache('sessions');
   document.getElementById('ct-screen').classList.add('hidden');
   document.getElementById('sup-screen').classList.add('hidden');
   document.getElementById('auth-screen').classList.remove('hidden');
@@ -1329,7 +1329,7 @@ async function deactivateStaff(id){
 }
 
 /* ===========================================================================
-   12. chat_sessions, MESSAGES, REALTIME, INCIDENT MANAGEMENT
+   12. SESSIONS, MESSAGES, REALTIME, INCIDENT MANAGEMENT
    =========================================================================== */
 async function createNewSession(){
   S.renderedMsgIds.clear();
@@ -1337,7 +1337,7 @@ async function createNewSession(){
   cleanupMsgChannel();
   document.getElementById('messages').innerHTML='';
   try{
-    const{data,error}=await db.from('chat_chat_sessions').insert({user_id:S.profile.id,user_name:S.profile.name,user_role:S.profile.role,status:'active'}).select('id').single();
+    const{data,error}=await db.from('sessions').insert({user_id:S.profile.id,user_name:S.profile.name,user_role:S.profile.role,status:'active'}).select('id').single();
     if(error)throw error;
     S.currentSessionId=data.id;
     subscribeToMessages(data.id);
@@ -1366,7 +1366,7 @@ async function saveSession(){
     if(on)u.order_number=on;if(ch)u.channel=ch;if(ps)u.product_site=ps;
     u.status='completed';
     u.ended_at=now();
-    const{error}=await db.from('chat_chat_sessions').update(u).eq('id',S.currentSessionId);
+    const{error}=await db.from('sessions').update(u).eq('id',S.currentSessionId);
     if(error)throw error;
     try{await db.rpc('log_activity',{p_action:'session_saved',p_details:{session_id:S.currentSessionId}});}catch(e){}
     showToast('Conversation saved','success');
@@ -1699,7 +1699,7 @@ async function sendMessage(){
   const u={};
   const on=document.getElementById('ct-order').value.trim(),ch=S.channel,ps=document.getElementById('ct-site').value;
   if(on)u.order_number=on;if(ch)u.channel=ch;if(ps)u.product_site=ps;
-  if(Object.keys(u).length>0){try{await db.from('chat_chat_sessions').update(u).eq('id',S.currentSessionId);}catch(e){}}
+  if(Object.keys(u).length>0){try{await db.from('sessions').update(u).eq('id',S.currentSessionId);}catch(e){}}
   showTyping();
   try{
     const t0=Date.now();
@@ -1929,7 +1929,7 @@ async function deleteIncidentConfirm(id){
 }
 
 /* ===========================================================================
-   16. SUPERVISOR VIEWS — overview / staff / kb / sites / incidents / chat_sessions / analytics
+   16. SUPERVISOR VIEWS — overview / staff / kb / sites / incidents / sessions / analytics
    =========================================================================== */
 let analyticsFilter='all';// 'all' | 'day' | 'week' | 'month'
 
@@ -1944,15 +1944,15 @@ async function switchSupView(view){
     case'knowledge':await renderKnowledge(c);break;
     case'sites':await renderSites(c);break;
     case'incidents':await renderIncidents(c);break;
-    case'chat_sessions':await renderchat_sessions(c);break;
+    case'sessions':await renderSessions(c);break;
   }
 }
 
 async function loadActiveCount(){
   try{
-    const{count,error}=await db.from('chat_chat_sessions').select('*',{count:'exact',head:true}).eq('status','active');
+    const{count,error}=await db.from('sessions').select('*',{count:'exact',head:true}).eq('status','active');
     if(error)throw error;
-    document.getElementById('sup-active-count').textContent=(count||0)+' active chat_sessions';
+    document.getElementById('sup-active-count').textContent=(count||0)+' active sessions';
   }catch(e){console.error('Active count error:',e);document.getElementById('sup-active-count').textContent='—';}
 }
 
@@ -1961,14 +1961,14 @@ async function renderSupHome(c){
   try{
     // Parallel load for KPIs
     const[incRes,staffRes,sessionRes]=await Promise.all([
-      loadIncidents(),loadProfiles(),db.from('chat_chat_sessions').select('*').order('created_at',{ascending:false}).limit(50)
+      loadIncidents(),loadProfiles(),db.from('sessions').select('*').order('created_at',{ascending:false}).limit(50)
     ]);
     const incidents=incRes||[];
-    const chat_sessions=(sessionRes.data||[]).slice().sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
+    const sessions=(sessionRes.data||[]).slice().sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
     const openInc=incidents.filter(i=>i.status==='open').length;
     const criticalInc=incidents.filter(i=>(i.priority==='critical'||i.priority==='high')&&i.status!=='resolved'&&i.status!=='closed').length;
     const activeStaff=(staffRes||[]).filter(p=>p.role!=='supervisor'&&p.role!=='admin').length;
-    const sortedchat_sessions=chat_sessions.slice(0,8);
+    const sortedSessions=sessions.slice(0,8);
     c.innerHTML=`
       <div class="page-enter">
         <div class="flex flex-col md:flex-row md:items-end md:justify-between gap-2 mb-6">
@@ -1990,8 +1990,8 @@ async function renderSupHome(c){
           </div>
           <div class="kpi-card">
             <div class="kpi-icon bg-avx-success/15 text-avx-success"><i class="fa-solid fa-comments"></i></div>
-            <p class="kpi-label">Recent chat_sessions</p>
-            <p class="kpi-value">${chat_sessions.length}</p>
+            <p class="kpi-label">Recent Sessions</p>
+            <p class="kpi-value">${sessions.length}</p>
             <p class="kpi-sub">last 50 conversations</p>
           </div>
           <div class="kpi-card">
@@ -2004,7 +2004,7 @@ async function renderSupHome(c){
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div class="section-card lg:col-span-2">
             <div class="section-title"><i class="fa-solid fa-comments"></i>Recent Conversations</div>
-            ${sortedchat_sessions.length?`<div class="space-y-2">${sortedchat_sessions.map(s=>`
+            ${sortedSessions.length?`<div class="space-y-2">${sortedSessions.map(s=>`
               <div class="bg-avx-card border border-avx-border rounded-lg p-3 hover-card cursor-pointer" onclick="openConvModal('${esc(s.id)}','${esc(s.user_name||'')}','${esc(s.user_role||'')}','${getRowDate(s)}')">
                 <div class="flex items-center justify-between">
                   <div class="flex items-center gap-2">
@@ -2016,7 +2016,7 @@ async function renderSupHome(c){
                   <span class="text-xs text-avx-muted">${timeAgo(s.created_at||s.updated_at)}</span>
                 </div>
                 ${s.order_number?`<p class="text-xs text-avx-muted mt-1"><i class="fa-solid fa-hashtag mr-1"></i>${esc(s.order_number)}</p>`:''}
-              </div>`).join('')}</div>`:'<div class="empty-state"><i class="fa-solid fa-inbox"></i><p>No chat_sessions yet.</p></div>'}
+              </div>`).join('')}</div>`:'<div class="empty-state"><i class="fa-solid fa-inbox"></i><p>No sessions yet.</p></div>'}
           </div>
           <div class="section-card">
             <div class="section-title"><i class="fa-solid fa-triangle-exclamation"></i>Open Incidents</div>
@@ -2355,18 +2355,18 @@ async function renderIncidents(c){
 }
 
 /* ---------------------------------------------------------------------------
-   chat_sessions VIEW (Supervisor)
+   SESSIONS VIEW (Supervisor)
    --------------------------------------------------------------------------- */
-async function renderchat_sessions(c){
+async function renderSessions(c){
   c.innerHTML='<div class="flex items-center justify-center py-20 text-avx-muted"><i class="fa-solid fa-spinner fa-spin mr-3"></i>Loading...</div>';
   try{
-    const[data,error]=await db.from('chat_chat_sessions').select('*').order('created_at',{ascending:false}).limit(200);
+    const[data,error]=await db.from('sessions').select('*').order('created_at',{ascending:false}).limit(200);
     if(error)throw error;
-    const chat_sessions=data||[];
-    const sorted=sortByDate(chat_sessions);
+    const sessions=data||[];
+    const sorted=sortByDate(sessions);
     c.innerHTML=`
       <div class="page-enter">
-        <div class="mb-4"><h2 class="font-display text-xl font-bold text-avx-text">Conversations</h2><p class="text-sm text-avx-muted">${sorted.length} chat_sessions</p></div>
+        <div class="mb-4"><h2 class="font-display text-xl font-bold text-avx-text">Conversations</h2><p class="text-sm text-avx-muted">${sorted.length} sessions</p></div>
         ${!sorted.length?'<div class="empty-state"><i class="fa-solid fa-comments"></i><p>No conversations yet.</p></div>':`
         <div class="space-y-2">${sorted.map(s=>`
           <div class="bg-avx-surface border border-avx-border rounded-xl p-4 hover-card cursor-pointer" onclick="openConvModal('${esc(s.id)}','${esc(s.user_name||'')}','${esc(s.user_role||'')}','${getRowDate(s)}')">
@@ -2402,12 +2402,12 @@ async function renderAnalytics(c){
 
     const[incidents,sessionRes,msgRes]=await Promise.all([
       loadIncidents(),
-      db.from('chat_chat_sessions').select('*').limit(2000),
+      db.from('sessions').select('*').limit(2000),
       db.from('messages').select('*').limit(5000)
     ]);
     await loadProfiles();
     const kb=await loadKB();
-    const chat_sessions=sessionRes.data||[];
+    const sessions=sessionRes.data||[];
     const messages=msgRes.data||[];
 
     const nowD=new Date();
@@ -2423,14 +2423,14 @@ async function renderAnalytics(c){
     }
     const period=analyticsFilter;
     const msgsP=filterByPeriod(messages,'created_at',period);
-    const chat_sessionsP=filterByPeriod(chat_sessions,'created_at',period);
+    const sessionsP=filterByPeriod(sessions,'created_at',period);
     const incidentsP=filterByPeriod(incidents,'created_at',period);
     const kbMatches=messages.filter(m=>m.source==='kb'&&m.matched_id);
     const aiMsgs=messages.filter(m=>(m.sender_role==='bot')&&m.source!=='kb');
     const paraphrases=messages.filter(m=>m.intent==='paraphrase');
     const totalKBMatches=kbMatches.length;
     const totalAI=aiMsgs.length;
-    const totalConversations=chat_sessions.length;
+    const totalConversations=sessions.length;
     const matchRate=messages.filter(m=>m.sender_role==='bot').length?(totalKBMatches/(totalKBMatches+totalAI)*100):0;
     const avgRespTimeMs=(()=>{const xs=messages.filter(m=>m.response_time_ms).map(m=>m.response_time_ms);return xs.length?Math.round(xs.reduce((a,b)=>a+b,0)/xs.length):0;})();
 
@@ -2636,7 +2636,7 @@ async function openConvModal(sid,name,role,time){
   try{
     const{data:msgs,error}=await db.from('messages').select('*').eq('session_id',sid);
     if(error)throw error;
-    const{data:session}=await db.from('chat_chat_sessions').select('*').eq('id',sid).single();
+    const{data:session}=await db.from('sessions').select('*').eq('id',sid).single();
     if(session){
       const notesCol=Object.keys(session).find(k=>k.toLowerCase().includes('note'));
       if(notesCol&&session[notesCol]){document.getElementById('conv-notes').classList.remove('hidden');document.getElementById('conv-notes-text').textContent=session[notesCol];}
@@ -2665,7 +2665,7 @@ async function logActivity(action,details){
 }
 
 /* ===========================================================================
-   19. REALTIME SUBSCRIPTIONS — KB / Sites / Incidents / Profiles / chat_sessions
+   19. REALTIME SUBSCRIPTIONS — KB / Sites / Incidents / Profiles / Sessions
    =========================================================================== */
 async function subscribeKbRealtime(){
   const ch=db.channel('rt-kb')
@@ -2690,9 +2690,9 @@ async function subscribeKbRealtime(){
       if(S.supView==='staff')renderStaff(document.getElementById('sup-content'));
       else if(S.supView==='analytics')renderAnalytics(document.getElementById('sup-content'));
     })
-    .on('postgres_changes',{event:'*',schema:'public',table:'chat_sessions'},async p=>{
-      flushCache('chat_sessions');loadActiveCount();
-      if(S.supView==='chat_sessions'||S.supView==='home'){switchSupView(S.supView);}
+    .on('postgres_changes',{event:'*',schema:'public',table:'sessions'},async p=>{
+      flushCache('sessions');loadActiveCount();
+      if(S.supView==='sessions'||S.supView==='home'){switchSupView(S.supView);}
     })
     .subscribe();
   RealtimeSubs.push(ch);
@@ -2707,7 +2707,7 @@ async function manualRefresh(scope){
   refreshCount++;updateClock();
   const ts=new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
   ['ct-refresh-ts','sup-refresh-ts'].forEach(id=>{const e=document.getElementById(id);if(e)e.innerHTML=`<i class="fa-regular fa-clock"></i> Updated ${ts} (#${refreshCount})`;});
-  flushCache('kb');flushCache('sites');flushCache('profiles');flushCache('incidents');flushCache('chat_sessions');
+  flushCache('kb');flushCache('sites');flushCache('profiles');flushCache('incidents');flushCache('sessions');
   if(scope==='chat'){
     await loadSitesDropdown();
     showToast('Data refreshed','success');
