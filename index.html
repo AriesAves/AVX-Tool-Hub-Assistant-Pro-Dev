@@ -1337,7 +1337,7 @@ async function createNewSession(){
   cleanupMsgChannel();
   document.getElementById('messages').innerHTML='';
   try{
-    const{data,error}=await db.from('sessions').insert({user_id:S.profile.id,user_name:S.profile.name,user_role:S.profile.role,status:'active'}).select('id').single();
+    const{data,error}=await db.from('chat_sessions').insert({user_id:S.profile.id,user_name:S.profile.name,user_role:S.profile.role,status:'active'}).select('id').single();
     if(error)throw error;
     S.currentSessionId=data.id;
     subscribeToMessages(data.id);
@@ -1366,7 +1366,7 @@ async function saveSession(){
     if(on)u.order_number=on;if(ch)u.channel=ch;if(ps)u.product_site=ps;
     u.status='completed';
     u.ended_at=now();
-    const{error}=await db.from('sessions').update(u).eq('id',S.currentSessionId);
+    const{error}=await db.from('chat_sessions').update(u).eq('id',S.currentSessionId);
     if(error)throw error;
     try{await db.rpc('log_activity',{p_action:'session_saved',p_details:{session_id:S.currentSessionId}});}catch(e){}
     showToast('Conversation saved','success');
@@ -1699,7 +1699,7 @@ async function sendMessage(){
   const u={};
   const on=document.getElementById('ct-order').value.trim(),ch=S.channel,ps=document.getElementById('ct-site').value;
   if(on)u.order_number=on;if(ch)u.channel=ch;if(ps)u.product_site=ps;
-  if(Object.keys(u).length>0){try{await db.from('sessions').update(u).eq('id',S.currentSessionId);}catch(e){}}
+  if(Object.keys(u).length>0){try{await db.from('chat_sessions').update(u).eq('id',S.currentSessionId);}catch(e){}}
   showTyping();
   try{
     const t0=Date.now();
@@ -1950,7 +1950,7 @@ async function switchSupView(view){
 
 async function loadActiveCount(){
   try{
-    const{count,error}=await db.from('sessions').select('*',{count:'exact',head:true}).eq('status','active');
+    const{count,error}=await db.from('chat_sessions').select('*',{count:'exact',head:true}).eq('status','active');
     if(error)throw error;
     document.getElementById('sup-active-count').textContent=(count||0)+' active sessions';
   }catch(e){console.error('Active count error:',e);document.getElementById('sup-active-count').textContent='—';}
@@ -1961,7 +1961,7 @@ async function renderSupHome(c){
   try{
     // Parallel load for KPIs
     const[incRes,staffRes,sessionRes]=await Promise.all([
-      loadIncidents(),loadProfiles(),db.from('sessions').select('*').order('created_at',{ascending:false}).limit(50)
+      loadIncidents(),loadProfiles(),db.from('chat_sessions').select('*').order('created_at',{ascending:false}).limit(50)
     ]);
     const incidents=incRes||[];
     const sessions=(sessionRes.data||[]).slice().sort((a,b)=>new Date(b.created_at||0)-new Date(a.created_at||0));
@@ -2360,7 +2360,7 @@ async function renderIncidents(c){
 async function renderSessions(c){
   c.innerHTML='<div class="flex items-center justify-center py-20 text-avx-muted"><i class="fa-solid fa-spinner fa-spin mr-3"></i>Loading...</div>';
   try{
-    const[data,error]=await db.from('sessions').select('*').order('created_at',{ascending:false}).limit(200);
+    const[data,error]=await db.from('chat_sessions').select('*').order('created_at',{ascending:false}).limit(200);
     if(error)throw error;
     const sessions=data||[];
     const sorted=sortByDate(sessions);
@@ -2402,7 +2402,7 @@ async function renderAnalytics(c){
 
     const[incidents,sessionRes,msgRes]=await Promise.all([
       loadIncidents(),
-      db.from('sessions').select('*').limit(2000),
+      db.from('chat_sessions').select('*').limit(2000),
       db.from('messages').select('*').limit(5000)
     ]);
     await loadProfiles();
@@ -2636,7 +2636,7 @@ async function openConvModal(sid,name,role,time){
   try{
     const{data:msgs,error}=await db.from('messages').select('*').eq('session_id',sid);
     if(error)throw error;
-    const{data:session}=await db.from('sessions').select('*').eq('id',sid).single();
+    const{data:session}=await db.from('chat_sessions').select('*').eq('id',sid).single();
     if(session){
       const notesCol=Object.keys(session).find(k=>k.toLowerCase().includes('note'));
       if(notesCol&&session[notesCol]){document.getElementById('conv-notes').classList.remove('hidden');document.getElementById('conv-notes-text').textContent=session[notesCol];}
