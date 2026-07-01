@@ -1331,21 +1331,78 @@ async function deactivateStaff(id){
 /* ===========================================================================
    12. SESSIONS, MESSAGES, REALTIME, INCIDENT MANAGEMENT
    =========================================================================== */
-async function createNewSession(){
-  S.renderedMsgIds.clear();
-  S.lastUserMsg='';S.lastBotMsgPlain='';S.lastBotMsgHTML='';
-  cleanupMsgChannel();
-  document.getElementById('messages').innerHTML='';
-  try{
-    const{data,error}=await db.from('sessions').insert({user_id:S.profile.id,user_name:S.profile.name,user_role:S.profile.role,status:'active'}).select('id').single();
-    if(error)throw error;
-    S.currentSessionId=data.id;
-    subscribeToMessages(data.id);
-  }catch(e){
-    console.error('Session error:',e);
-    showToast('Could not start session: '+e.message,'error');
-    S.currentSessionId=null;
-  }
+async function createNewSession() {
+
+    if (S.chat.creatingSession)
+        return;
+
+    S.chat.creatingSession = true;
+
+    try {
+
+        console.log("Creating new session...");
+
+        const { data, error } = await db
+    .from("sessions")
+    .insert(...);
+
+handleSupabaseError(error, "Creating session");
+                user_id: S.profile.id,
+                user_name: S.profile.name,
+                user_role: S.profile.role,
+                status: "active"
+            })
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        S.currentSessionId = data.id;
+
+        console.log("Session created:", data.id);
+
+        await loadChatHistory();
+
+    } catch (e) {
+
+        console.error("SESSION ERROR:", e);
+
+        showToast(
+            "Could not start session: " + e.message,
+            "error"
+        );
+
+        S.currentSessionId = null;
+
+        throw e;
+
+    } finally {
+
+        S.chat.creatingSession = false;
+
+    }
+}
+async function ensureChatSession(){
+
+    if(S.currentSessionId)
+        return true;
+
+    try{
+
+        await createNewSession();
+
+        return !!S.currentSessionId;
+
+    }catch(e){
+
+        console.error(e);
+
+        return false;
+
+    }
+
+}
+
   renderMsg({role:'bot',message:`Hi ${esc(S.profile.name||'there')}! I'm your AVX Print Assistant.<br><br>I can help you with file prep, color specs, paper stocks, shipping, pricing, product details, and more.<br><br><div class="sugg-section" style="border:none;margin-top:4px;padding-top:0;"><div class="sugg-chips">
     <button class="sugg-chip" onclick="handleSuggestionClick('What file format should I use?')"><i class="fa-solid fa-file"></i>File Prep</button>
     <button class="sugg-chip" onclick="handleSuggestionClick('What color mode is required?')"><i class="fa-solid fa-palette"></i>Color Specs</button>
@@ -1672,20 +1729,92 @@ async function fetchLatestMessageFromDB(role){
   }catch(e){return null;}
 }
 
-async function sendMessage(){
-  const input=document.getElementById('chat-input'),text=input.value.trim();
-  const sendBtn=document.getElementById('send-btn');
-  if(!text||!S.currentSessionId)return;
-  input.value='';input.style.height='auto';
-  sendBtn.disabled=true;
+async function sendMessage() {
+
+    if(S.chatSending)
+    return;
+
+S.chatSending=true;
+
+    const input = document.getElementById("chat-input");
+    const sendBtn = document.getElementById("send-btn");
+
+    const text = input.value.trim();
+
+    if (!text)
+        return;
+
+    if (!(await ensureChatSession()))
+        return;
+
+    S.chat.sending = true;
+    sendBtn.disabled = true;
+
+    input.value = "";
+    input.style.height = "auto";
+
+    appendMessage("user", text);
+
+    try {
+
+        await saveMessageWithRetry(text, "user");
+
+        await askAI(text);
+
+    } catch (e) {
+
+        console.error(e);
+
+        showToast(
+            e.message,
+            "error"
+        );
+
+    } finally{
+
+    S.chatSending=false;
+
+}
+
+ 
+async function saveMessageWithRetry(text, sender) {
+
+    for (let i = 0; i < 3; i++) {
+
+        const { error } = await db
+            .from("messages")
+            .insert({
+                session_id: S.currentSessionId,
+                user_id: S.profile.id,
+                sender_role: sender,
+                content: text
+            });
+
+        if (!error)
+            return;
+
+        console.warn("Retry:", i + 1);
+
+        await new Promise(r => setTimeout(r, 1000));
+
+    }
+
+    throw new Error("Unable to save message.");
+
+}
+
   // Detect paraphrase intent early
   const action=detectParaphraseAction(text);
   if(action){
     return await handleParaphraseRequest(text,action);
   }
   try{
-    const{data,error}=await db.from('messages').insert({session_id:S.currentSessionId,user_id:S.profile.id,sender_role:'user',content:text}).select('id').single();
-    if(error)throw error;
+    const{data,error}=await saveMessageRetry({
+    session_id: S.currentSessionId,
+    user_id: S.profile.id,
+    sender_role: "user",
+    content: text
+});
     S.renderedMsgIds.add(data.id);
     S.lastUserMsg=text;
     renderMsg({role:'user',message:text,time:now(),id:data.id});
@@ -2717,6 +2846,19 @@ async function manualRefresh(scope){
     showToast('Data refreshed','success');
   }
   setTimeout(()=>{if(btn){btn.classList.remove('spinning');btn.disabled=false;}},350);
+}
+function handleSupabaseError(error, action = "Database operation") {
+
+    if (!error) return;
+
+    console.error(`[${action}]`, error);
+
+    showToast(
+        `${action}: ${error.message}`,
+        "error"
+    );
+
+    throw error;
 }
 
 /* ===========================================================================
