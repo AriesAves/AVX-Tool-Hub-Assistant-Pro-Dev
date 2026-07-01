@@ -40,4 +40,4 @@ Short Version
 
 AVX Tool Hub Assistant Pro is an AI-powered print support assistant that helps Consultants, Technicians, and Supervisors access printing knowledge, production guidelines, product information, and customer support resources while tracking assistance activities and maintaining searchable conversation records for improved operational efficiency.
 
-https://ariesaves.github.io/AVX-Tool-Hub-Assistant-Pro/
+https://ariesaves.github.io/AVX-Tool-Hub-Assistant-Pro-Dev/
