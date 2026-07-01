@@ -1610,22 +1610,58 @@ const ACTION_MAP={
 function detectParaphraseAction(text){
   const l=text.toLowerCase().replace(/[^a-z\s]/g,' ').replace(/\s+/g,' ').trim();
   if(!l)return null;
+  // Strip common polite prefixes so "please make it professional" still works
+  let stripped=l;
+  let prev='';
+  while(prev!==stripped){
+    prev=stripped;
+    stripped=stripped.replace(/^(please\s+|can\s+you\s+|could\s+you\s+|would\s+you\s+|will\s+you\s+)/i,'').trim();
+  }
+  // Only treat as a paraphrase COMMAND if the message is short and command-form.
+  // Regular questions like "I want a better price" / "I want a formal quote"
+  // are longer than 8 words OR don't start with an action keyword, so they fall
+  // through to normal chat. This is the key fix for "I cannot send chat".
+  const words=stripped.split(/\s+/).filter(Boolean);
+  if(words.length===0||words.length>8)return null;
   // detect shorthand triggers
   const triggers=[
-    {kw:['shorten','shorter','more brief','brief','trim'],action:'shorten'},
-    {kw:['expand','longer','more detail','expand on','elaborate'],action:'expand'},
-    {kw:['simplify','simpler','easier','plain'],action:'simplify'},
+    {kw:['shorten it','shorten this','shorten that','shorten'],action:'shorten'},
+    {kw:['expand on it','expand on this','expand on that','expand it','expand this','expand that','longer','elaborate','expand'],action:'expand'},
+    {kw:['simplify it','simplify this','simplify that','simplify','simpler','plain'],action:'simplify'},
     {kw:['make it concise','be concise','concise'],action:'concise'},
     {kw:['improve grammar','fix grammar','grammar','grammatical'],action:'grammar'},
-    {kw:['make it professional','professional','more professional','business tone','formal'],action:'professional'},
-    {kw:['make it friendly','casual','warm','friendly','friendly tone'],action:'friendly'},
-    {kw:['make it formal','formal tone'],action:'formal'},
-    {kw:['technical','technical tone'],action:'technical'},
-    {kw:['paraphrase','rephrase','reword','paraphrasing','rewording'],action:'paraphrase'},
-    {kw:['rewrite','rewrite that','rewrite this','rewriting'],action:'rewrite'},
-    {kw:['improve','better'],action:'improve'}
+    {kw:['make it professional','professional tone','business tone','more professional','professional'],action:'professional'},
+    {kw:['make it friendly','casual tone','warm tone','friendly tone','casual','warm','friendly'],action:'friendly'},
+    {kw:['make it formal','formal tone','more formal'],action:'formal'},
+    {kw:['make it technical','technical tone','technical'],action:'technical'},
+    {kw:['paraphrase it','paraphrase this','paraphrase that','paraphrase','rephrase','reword','paraphrasing','rewording'],action:'paraphrase'},
+    {kw:['rewrite it','rewrite this','rewrite that','rewrite'],action:'rewrite'},
+    {kw:['improve it','improve this','improve that','improve'],action:'improve'}
   ];
-  for(const t of triggers){for(const k of t.kw){if(l===k||l.startsWith(k+' ')||l.endsWith(' '+k)||l.includes(' '+k+' '))return t.action;}}
+  // Special-case: "make it X" — only treat as paraphrase if the X is a
+  // tone/length adjective, never a noun like "make it bigger" (object).
+  const makeIt=stripped.match(/^make\s+it\s+(shorter|brief|concise|simpler|simpler\.|plain|easier|easier\.|tighter|trim|longer|more\s+detailed|expanded|professional|more\s+professional|formal|more\s+formal|friendly|casual|warm|technical|better)$/);
+  if(makeIt){
+    const t=makeIt[1];
+    if(/^(shorter|brief|tighter|trim)/.test(t))return'shorten';
+    if(/^concise/.test(t))return'concise';
+    if(/^(longer|more\s+detailed|expanded)/.test(t))return'expand';
+    if(/^(simpler|plain|easier)/.test(t))return'simplify';
+    if(/^(professional|more\s+professional)/.test(t))return'professional';
+    if(/^(formal|more\s+formal)/.test(t))return'formal';
+    if(/^(friendly|casual|warm)/.test(t))return'friendly';
+    if(/^(technical)/.test(t))return'technical';
+    if(/^(better)/.test(t))return'improve';
+  }
+  // Match only when the action keyword is the WHOLE message or starts the
+  // message. We removed the old `endsWith` and `includes(' '+k+' ')` checks
+  // because they were hijacking normal chat messages that happened to
+  // contain a trigger word somewhere in the middle of the sentence.
+  for(const t of triggers){
+    for(const k of t.kw){
+      if(stripped===k||stripped.startsWith(k+' '))return t.action;
+    }
+  }
   return null;
 }
 
@@ -1670,6 +1706,48 @@ async function fetchLatestMessageFromDB(role){
     if(error)return null;
     return(data&&data[0])||null;
   }catch(e){return null;}
+}
+
+// Safety net used by handleParaphraseRequest when there's nothing to paraphrase.
+// Instead of dropping the user's text, we just send it through the normal chat flow.
+async function sendMessageAsNormal(text){
+  if(!text||!S.currentSessionId)return;
+  const sendBtn=document.getElementById('send-btn');
+  try{
+    const{data,error}=await db.from('messages').insert({session_id:S.currentSessionId,user_id:S.profile.id,sender_role:'user',content:text}).select('id').single();
+    if(error)throw error;
+    S.renderedMsgIds.add(data.id);
+    S.lastUserMsg=text;
+    renderMsg({role:'user',message:text,time:now(),id:data.id});
+    await logActivity('ask_ai',{text_length:text.length});
+    try{await db.rpc('log_activity',{p_action:'ask_ai',p_details:{text_length:text.length}});}catch(e){}
+  }catch(e){
+    showToast('Failed to send: '+e.message,'error');
+    if(sendBtn)sendBtn.disabled=false;
+    return;
+  }
+  const u={};
+  const on=document.getElementById('ct-order').value.trim(),ch=S.channel,ps=document.getElementById('ct-site').value;
+  if(on)u.order_number=on;if(ch)u.channel=ch;if(ps)u.product_site=ps;
+  if(Object.keys(u).length>0){try{await db.from('sessions').update(u).eq('id',S.currentSessionId);}catch(e){}}
+  showTyping();
+  try{
+    const t0=Date.now();
+    const match=await queryKBSmart(text);
+    const responseHTML=buildSmartResponse(match,text);
+    const elapsed=Date.now()-t0;
+    const{data:botData,error:botErr}=await db.from('messages').insert({session_id:S.currentSessionId,user_id:S.profile.id,sender_role:'bot',content:responseHTML,source:(match.best?'kb':'ai'),matched_id:match.best?.entry?.id||null,response_time_ms:elapsed}).select('id').single();
+    S.lastBotMsgHTML=responseHTML;
+    S.lastBotMsgPlain=stripHTML(responseHTML);
+    if(!botErr&&botData)S.renderedMsgIds.add(botData.id);
+    renderMsg({role:'bot',message:responseHTML,time:now()});
+    await logActivity('ai_response',{source:match.best?'kb':'ai',matched:!!match.best,intent:match.intent,elapsed_ms:elapsed});
+  }catch(e){
+    console.error('Smart response error:',e);
+    renderMsg({role:'bot',message:"I'm having trouble processing that right now. Please try again or I can connect you with a supervisor.",time:now()});
+  }
+  hideTyping();
+  if(sendBtn)sendBtn.disabled=false;
 }
 
 async function sendMessage(){
@@ -1741,7 +1819,12 @@ async function handleParaphraseRequest(userText,action){
   }
   let chosenTarget=target;
   if(target==='infer'){chosenTarget=botSource?'bot':(userSource?'user':null);}
-  if(!chosenTarget)return showToast('Nothing to paraphrase yet — start a conversation first.','warning');
+  if(!chosenTarget){
+    // Safety net: if we got here but there's nothing to paraphrase, just send
+    // the user's text as a normal chat message instead of silently dropping it.
+    document.getElementById('send-btn').disabled=false;
+    return await sendMessageAsNormal(userText);
+  }
 
   const sourceText=chosenTarget==='bot'?stripHTML(botSource):userSource;
   if(!sourceText||!sourceText.trim())return showToast('No previous '+(chosenTarget==='bot'?'response':'message')+' to paraphrase.','warning');
