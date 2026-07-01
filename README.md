@@ -1,4 +1,4 @@
-https://ariesaves.github.io/AVX-Tool-Hub-Assistant-Pro/
+https://ariesaves.github.io/AVX-Tool-Hub-Assistant-Pro-Dev/
 
 AVX Tool Hub Assistant Pro
 
